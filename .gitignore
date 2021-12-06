@@ -1,0 +1,17 @@
+/ACKNOWLEDGEMENTS
+/LICENSE
+/__pycache__
+/assets
+/cache
+/cache_dataset.py
+/env
+/logs
+/mpc_logs
+/paths
+/pose_estimate.py
+/pose_estimate_inerf.py
+/sim_img_cache
+/simulator.py
+/stonehenge.blend
+/stonehenge.blend1
+/test.py
