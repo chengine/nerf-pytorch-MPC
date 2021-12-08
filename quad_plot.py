@@ -17,7 +17,7 @@ from typeguard import typechecked
 
 patch_typeguard()
 
-from load_nerf import get_nerf
+#from load_nerf import get_nerf
 
 from quad_helpers import Simulator, QuadPlot
 from quad_helpers import rot_matrix_to_vec, vec_to_rot_matrix, next_rotation

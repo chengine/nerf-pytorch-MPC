@@ -12,6 +12,8 @@ import json
 
 import time
 
+import glob
+
 # This is required to print output to blender console (needed if starting blender not from command line)
 
 #def print(*data):
@@ -34,6 +36,10 @@ path_to_files = 'sim_img_cache'
 
 path = bpy.path.abspath('//') + path_to_files
 
+files = glob.glob(path + '/*')
+for f in files:
+    os.remove(f)
+    
 # Getting the list of directories
 dir = os.listdir(path)
 
@@ -56,7 +62,8 @@ while True:
         with open(path_to_pose,"r") as f:
             pose = json.load(f)
         camera.matrix_world = Matrix(pose)
-
+        bpy.context.view_layer.update()
+        
         # save image from camera
         bpy.context.scene.render.filepath = path_to_img
         bpy.context.scene.render.resolution_x = 800
@@ -69,4 +76,9 @@ while True:
         iter += 1
 
     time.sleep(0.01)
+    if os.path.exists(path + '/reset.json') is True:
+        files = glob.glob(path + '/*')
+        for f in files:
+            os.remove(f)
+        iter = 0
 print("--------------------    DONE WITH BLENDER SCRIPT    --------------------")

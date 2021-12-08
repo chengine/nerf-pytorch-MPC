@@ -13,6 +13,11 @@ vec_to_rot_matrix = lambda x: R.as_matrix(R.from_rotvec(x))
 
 rot_matrix_to_vec = lambda y: R.as_rotvec(R.from_matrix(y))
 
+rot_x = lambda phi: np.array([
+        [1., 0., 0.],
+        [0., np.cos(phi), -np.sin(phi)],
+        [0., np.sin(phi), np.cos(phi)]], dtype=np.float32)
+
 def skew_matrix_torch(vector):  # vector to skewsym. matrix
 
     ss_matrix = torch.zeros((3,3))
@@ -43,15 +48,6 @@ class Agent():
         self.path = cfg['path']
         self.half_res = cfg['half_res']
         self.white_bg = cfg['white_bg']
-
-        # Getting the list of directories
-        dir = os.listdir(self.path)
-  
-        # Checking if the list is empty or not
-        if len(dir) == 0:
-            print("Empty directory")
-        else:
-            raise ValueError('Directory is not empty!')
 
         self.iter = 0
 
@@ -87,8 +83,9 @@ class Agent():
 
         new_state = newstate_noise.clone().cpu().detach().numpy()
 
+        ### IMPORTANT: ACCOUNT FOR CAMERA ORIENTATION WRT DRONE ORIENTATION
         new_pose = np.zeros((4, 4))
-        new_pose[:3, :3] = (new_state[6:15]).reshape((3, 3))
+        new_pose[:3, :3] = rot_x(np.pi/2) @ (new_state[6:15]).reshape((3, 3))
         new_pose[:3, 3] = new_state[:3]
         new_pose[3, 3] = 1.
 
@@ -100,6 +97,7 @@ class Agent():
         self.img = img
         self.states_history.append(self.x.clone().cpu().detach().numpy().tolist())
         self.iter += 1
+
         return new_pose, new_state, img
 
     def state2image(self, state):
@@ -179,7 +177,7 @@ class Agent():
     def listen_img(self, filename):
         while os.path.exists(filename) is False:
             time.sleep(0.01)
-        time.sleep(.1)
+        time.sleep(.3)
         img = imageio.imread(filename)
         img = (np.array(img) / 255.0).astype(np.float32)
         if self.half_res is True:
@@ -196,6 +194,13 @@ class Agent():
         img = (np.array(img) * 255.).astype(np.uint8)
         print('Received updated image')
         return img
+
+    def command_sim_reset(self):
+        filename = self.path + '/reset.json'
+        content = {}
+        with open(filename,"w+") as f:
+            json.dump(content, f)
+        return
 
     def save_data(self, filename):
         true_states = {}

@@ -23,28 +23,24 @@ import torchvision
 import yaml
 #from torch.utils.tensorboard import SummaryWriter
 
-from lietorch import SE3, LieGroupParameter
-from scipy.spatial.transform import Rotation as R
-import cv2
-
 # Import Helper Classes
-from estimator_helpers import Estimator
+from estimator_helpers import Estimator, estimate_relative_pose
 from agent_helpers import Agent
-#from quad_plot import System
-#from quad_helpers import Simulator, QuadPlot
+from quad_plot import System
+from quad_helpers import Simulator, QuadPlot
 from quad_helpers import rot_matrix_to_vec, vec_to_rot_matrix, next_rotation
-from mpc_utils import state2pose, extra_config_parser
+from mpc_utils import state2pose, extra_config_parser, Renderer
+from pose_estimate import rot_psi, rot_theta, rot_phi, trans_t
 
-from nerf import (CfgNode, get_embedding_function, get_ray_bundle, img2mse,
-                  load_blender_data, load_llff_data, meshgrid_xy, models,
-                  mse2psnr, run_one_iter_of_nerf)
+from nerf import (CfgNode, get_embedding_function,
+                  load_blender_data, load_llff_data, models)
 
 DEBUG = False
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 nerf_filter = True
 
 ####################### MAIN LOOP ##########################################
-def simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, nerf_cfg):
+def simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, model_coarse, model_fine, cfg, encode_position_fn, encode_direction_fn):
     '''We've assumed that by calling this function, the NeRF model has already been created (i.e. create_nerf has been called) such that
     such that calling render() returns a valid RGB, etc tensor.
 
@@ -75,131 +71,127 @@ def simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, nerf_cfg):
     start_state = planner_cfg['start_state']
     end_state = planner_cfg['end_state']
 
+    render_kwargs = {
+        'embed_fn': encode_position_fn,
+        'embeddirs_fn': encode_direction_fn,
+        'chunksize': 131000,
+        'model': model_fine
+    }
+
     if DEBUG == False:
         exp_name = planner_cfg['exp_name']
-        '''
-        basefolder = "paths" / pathlib.Path(planner_cfg['exp_name'])
-        if basefolder.exists():
-            print(basefolder, "already exists!")
-            if input("Clear it before continuing? [y/N]:").lower() == "y":
-                shutil.rmtree(basefolder)
-        basefolder.mkdir()
-        (basefolder / "train_poses").mkdir()
-        (basefolder / "train_graph").mkdir()
-        (basefolder / "execute_poses").mkdir()
-        (basefolder / "execute_graph").mkdir()
-        print("created", basefolder)
+        for i in range(100):
 
-        traj = System(renderer, start_state, end_state, planner_cfg)
+            renderer = Renderer(render_kwargs)
+            
+            basefolder = "paths" / pathlib.Path(planner_cfg['exp_name'])
+            if basefolder.exists():
+                print(basefolder, "already exists!")
+                if input("Clear it before continuing? [y/N]:").lower() == "y":
+                    shutil.rmtree(basefolder)
+            basefolder.mkdir()
+            (basefolder / "train_poses").mkdir()
+            (basefolder / "train_graph").mkdir()
+            (basefolder / "execute_poses").mkdir()
+            (basefolder / "execute_graph").mkdir()
+            print("created", basefolder)
 
-        traj.basefolder = basefolder
+            traj = System(renderer, start_state, end_state, planner_cfg)
 
-        traj.a_star_init()
+            traj.basefolder = basefolder
 
-        traj.learn_init()
-        '''
+            then = time.time()
+            traj.a_star_init()
+            now = time.time()
+            print('A* takes', time.time() - now)
 
-        agent = Agent(start_state, agent_cfg)
+            traj.learn_init()
+            print('Initial Path takes', time.time() - now)
 
-        if nerf_filter == True:
-            estimator = Estimator(filter_cfg, extra_cfg, agent, start_state, model_coarse, model_fine, nerf_cfg)
-        else:
-            #Just uses dynamics initialization iNERF
-            #TODO: MAKE THIS A SEPARATE CLASS
-            estimator = Estimator(filter_cfg, nerf_cfg, agent, start_state)
+            agent = Agent(start_state, agent_cfg)
 
-        true_states = start_state.cpu().detach().numpy()
+            filter = Estimator(filter_cfg, agent, start_state)
+            #inerf_dynamics = Estimator(filter_cfg, agent, start_state, filter=False)
 
-        measured_states = []
+            true_states = start_state.cpu().detach().numpy()
 
-        #steps = traj.get_actions().shape[0]
+            #steps = traj.get_actions().shape[0]
 
-        agent_file = './paths/agent_data.json'
-        with open(agent_file,"r") as f:
-            meta = json.load(f)
-            true_states = meta["true_states"]
-            true_states = np.array(true_states)
+            '''
+            agent_file = './paths/agent_data.json'
+            with open(agent_file,"r") as f:
+                meta = json.load(f)
+                true_states = meta["true_states"]
+                true_states = np.array(true_states)
 
-        true_states = true_states[1:]
+            true_states = true_states[1:]
+            '''
+            '''
+            action_file = './paths/estimator_data.json'
+            with open(action_file,"r") as f:
+                data_estimator = json.load(f)
+                actions = torch.tensor(data_estimator['actions'])
+            '''
 
-        action_file = './paths/estimator_data.json'
-        with open(action_file,"r") as f:
-            data_estimator = json.load(f)
-            actions = torch.tensor(data_estimator['actions'])
+            #assert len(true_states) == len(actions)
+            
+            #steps = actions.shape[0]
 
+            ###FOR EXPERIMENTS, TAKE THE FIRST 5 STEPS
+            steps = 10
 
-        assert len(true_states) == len(actions)
-        
-        steps = actions.shape[0]
+            noise_std = extra_cfg['mpc_noise_std']
+            noise_mean = extra_cfg['mpc_noise_mean']
 
-        noise_std = extra_cfg['mpc_noise_std']
-        noise_mean = extra_cfg['mpc_noise_mean']
+            for iter in trange(steps):
+                if iter < steps - 5:
+                    action = traj.get_next_action().clone().detach()
+                else:
+                    action = traj.get_actions()[iter - steps + 5, :]
 
-        for iter in trange(steps):
-            #if iter < steps - 5:
-            #    action = traj.get_next_action().clone().detach()
-            #else:
-            #    action = traj.get_actions()[iter - steps + 5, :]
+                #print(traj.get_actions().shape)
 
-            #print(traj.get_actions().shape)
+                #action = actions[iter]
 
-            action = actions[iter]
+                noise = np.random.normal(noise_mean, noise_std)
+                true_pose, true_state, gt_img = agent.step(action, noise=noise)
+                true_states = np.vstack((true_states, true_state))
 
-            #noise = np.random.normal(noise_mean, noise_std)
-            true_pose, true_state, gt_img = agent.step(action, noise=None)
-            #print('True_pose', true_pose)
-            true_states = np.vstack((true_states, true_state))
+                #true_pose, true_state, gt_img = agent.state2image(torch.tensor(true_states[iter]))
+                #plt.figure()
+                #plt.imsave('paths/true/'+ f'{iter}_gt_img.png', gt_img)
+                #plt.close()
 
-            #true_pose, true_state, gt_img = agent.state2image(torch.tensor(true_states[iter]))
-            plt.figure()
-            plt.imsave('paths/true/'+ f'{iter}_gt_img.png', gt_img)
-            plt.close()
+                #action = torch.tensor(actions[iter])
 
-            #action = torch.tensor(actions[iter])
+                #measured_state = estimator.optimize(start_state, sig, gt_img, true_pose)
 
-            #measured_state = estimator.optimize(start_state, sig, gt_img, true_pose)
+                #measured_states.append(measured_state.cpu().detach().numpy().tolist())
 
-            #measured_states.append(measured_state.cpu().detach().numpy().tolist())
+                then = time.time()
+                state_est = filter.estimate_state(gt_img, true_pose, action,
+                    model_coarse=model_coarse, model_fine=model_fine,cfg=cfg, encode_position_fn=encode_position_fn,
+                    encode_direction_fn=encode_direction_fn)
+                now = time.time()
+                print('Estimator takes', now-then)
 
-            if nerf_filter == True:
-                state_est = estimator.estimate_state(gt_img, true_pose, action)
-                measured_state = state_est
-            else:
-                pass
-                '''
-                #Propagate state estimate
-                next_estimate = agent.drone_dynamics(state_estimate, action)
+                #state_est_inerf_dyn = inerf_dynamics.estimate_state(gt_img, true_pose, action,
+                #    model_coarse=model_coarse, model_fine=model_fine,cfg=cfg, encode_position_fn=encode_position_fn,
+                #    encode_direction_fn=encode_direction_fn)
 
-                est_pose = convert_full_state2pose(next_estimate.cpu().detach())
+                then = time.time()
+                if iter < steps - 5:
+                    traj.update_state(state_est)
+                    traj.learn_update(iter)
+                now = time.time()
+                print('Update planner', now - then)
 
-                est_pose = convert_blender_to_sim_pose(est_pose)
-
-                pose_estimate = estimator.estimate_pose(est_pose, gt_img, true_pose)
-
-                pose_estimate = convert_sim_to_blender_pose(pose_estimate)
-
-                measured_state = next_estimate.cpu().clone().detach().numpy()
-                measured_state[:3] = pose_estimate[:3, 3]
-                measured_state[6:15] = pose_estimate[:3, :3].reshape(-1)
-                '''
-            measured_state = torch.tensor(measured_state)
-            measured_states.append(measured_state)
-
-            #if iter < steps - 5:
-            #    traj.update_state( measured_state )
-            #    traj.learn_update(iter)
-
-        print(true_states)
-        print(measured_states)
-
-        #plot_trajectory(traj.get_full_states(), true_states)
-        estimator.save_data(f'paths/{exp_name}/estimator_data.json')
-        agent.save_data(f'paths/{exp_name}/agent_data.json')
-
-        '''
-        with open('./paths/state_estimate.json',"w+") as f:
-            json.dump(measured_states, f)
-        '''
+            #plot_trajectory(traj.get_full_states(), true_states)
+            filter.save_data(f'paths/{exp_name}/filter_data_{i}.json')
+            #inerf_dynamics.save_data(f'paths/{exp_name}/inerf_dyn_data_{i}.json')
+            agent.save_data(f'paths/{exp_name}/agent_data_{i}.json')
+            agent.command_sim_reset()
+            time.sleep(0.1)
 
         return
 
@@ -461,8 +453,8 @@ if __name__ == "__main__":
             "fade_out_epoch": cfg_dict['fade_out_epoch'],
             "fade_out_sharpness": cfg_dict['fade_out_sharpness'],
             "epochs_update": cfg_dict['epochs_update'],
-            'start_state': start_state,
-            'end_state': end_state,
+            'start_state': start_state.to(device),
+            'end_state': end_state.to(device),
             'exp_name': cfg.experiment.id
             }
 
@@ -470,7 +462,7 @@ if __name__ == "__main__":
     agent_cfg = {'dt': planner_cfg["T_final"]/planner_cfg["steps"],
                 'mass': cfg_dict['mass'],
                 'g': cfg_dict['g'],
-                'I': torch.tensor(cfg_dict['I']).float(),
+                'I': torch.tensor(cfg_dict['I']).float().cuda(),
                 'path': cfg_dict['path'], 
                 'half_res': cfg.dataset.half_res, 
                 'white_bg': cfg.nerf.train.white_background}
@@ -484,9 +476,9 @@ if __name__ == "__main__":
         'sampling_strategy': cfg_dict['sampling_strategy'],
         'reject_thresh': cfg_dict['reject_thresh'],
         'N_iter': cfg_dict['N_iter'],
-        'sig0': torch.tensor(cfg_dict['sig0']).float(),
-        'Q': torch.tensor(cfg_dict['Q']).float(),
-        'R': torch.tensor(cfg_dict['R']).float(),
+        'sig0': torch.tensor(cfg_dict['sig0']).float().cuda(),
+        'Q': torch.tensor(cfg_dict['Q']).float().cuda(),
+        'R': torch.tensor(cfg_dict['R']).float().cuda(),
         'H': H,
         'W': W,
         'focal': focal
@@ -494,12 +486,22 @@ if __name__ == "__main__":
 
     ### EXTRA CONFIGS
     extra_cfg = {
-        'model_coarse': model_coarse,
-        'model_fine': model_fine,
-        'encode_position_fn': encode_position_fn,
-        'encode_direction_fn': encode_direction_fn,
         'mpc_noise_std': np.array([float(i) for i in cfg_dict['mpc_noise_std']]),
         'mpc_noise_mean': np.array([float(i) for i in cfg_dict['mpc_noise_mean']])
     }
 
-    simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, cfg)
+    '''
+    relative_pose_image_idx = 11  # Take first image as one to use
+    obs_img = images[i_test[relative_pose_image_idx]]
+    sensor_image = np.asarray(obs_img*255, dtype=np.uint8)
+    gt_pose = poses[i_test[relative_pose_image_idx]]
+
+    gt_pose = gt_pose.cpu().numpy()
+
+    start_pose = trans_t(cfg_dict['delta_t']) @ rot_phi(cfg_dict['delta_phi']/180.*np.pi) @ rot_theta(cfg_dict['delta_theta']/180.*np.pi) @ rot_psi(cfg_dict['delta_psi']/180.*np.pi) @ gt_pose
+
+    estimate_relative_pose(sensor_image, start_pose, obs_img_pose=gt_pose, obs_img=None, model_coarse=model_coarse, model_fine=model_fine,cfg=cfg,
+    encode_position_fn=encode_position_fn, encode_direction_fn=encode_direction_fn, dil_iter=3, kernel_size=5, lrate=0.005, batch_size=256, H=H, W=W, focal=focal, reject_thresh=0.6)
+    '''
+
+    simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, model_coarse, model_fine, cfg, encode_position_fn, encode_direction_fn)

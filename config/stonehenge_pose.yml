@@ -142,7 +142,7 @@ nerf:
     white_background: True
     # Standard deviation of noise to be added to the radiance field when
     # performing volume rendering.
-    radiance_field_noise_std: 0.2
+    radiance_field_noise_std: 0.1
     # Sample linearly in disparity space, as opposed to in depth space.
     lindisp: False
   # Validation-specific parameters.
@@ -168,15 +168,15 @@ nerf:
 dil_iter: 3
 kernel_size: 5
 batch_size: 256
-lrate_relative_pose_estimation: 0.005
+lrate_relative_pose_estimation: 0.002
 sampling_strategy: interest_regions
 reject_thresh: 0.6
 N_iter: 300
 
-delta_phi: 3.
-delta_theta: 3.
-delta_psi: 3.
-delta_t: 0.3
+delta_phi: 2.
+delta_theta: 2.
+delta_psi: 2.
+delta_t: 0.1
 
 noise: None
 sigma: 0.0
@@ -196,6 +196,8 @@ path: sim_img_cache/
 ### PLANNER CONFIGS
 start_pos: [0.39, -0.67, 0.2]
 end_pos: [-0.4, 0.55, 0.16]
+#start_pos: [0., -2., 0.2]
+#end_pos: [-0.4, 0.55, 0.16]
 start_R: [0.0, 0.0, 0.]
 end_R: [0.,0.0, 0.]
 T_final: 2.
@@ -207,5 +209,5 @@ fade_out_sharpness: 10
 epochs_update: 250
 
 ### MPC CONFIGS
-mpc_noise_mean: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-mpc_noise_std: [1e-2, 1e-2, 1e-2, 1e-3, 1e-3, 1e-3, 1e-2, 1e-2, 1e-2, 1e-3, 1e-3, 1e-3]
+mpc_noise_mean: [0., 0., 0., 0, 0, 0, 0, 0, 0, 0, 0, 0]
+mpc_noise_std: [2e-2, 2e-2, 2e-2, 1e-2, 1e-2, 1e-2, 2e-2, 2e-2, 2e-2, 1e-2, 1e-2, 1e-2]

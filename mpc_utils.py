@@ -1,5 +1,10 @@
 import numpy as np
 import torch
+from torchtyping import TensorDetail, TensorType
+from typeguard import typechecked
+from nerf.nerf_helpers import get_minibatches
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #Helper Functions
 def state2pose(vector):
@@ -24,7 +29,7 @@ def extra_config_parser(parser):
                         help='Number of iterations of dilation process')
     parser.add_argument("--kernel_size", type=int, default=5,
                         help='Kernel size for dilation')
-    parser.add_argument("--batch_size", type=int, default=512,
+    parser.add_argument("--batch_size", type=int, default=256,
                         help='Number of sampled rays per gradient step')
     parser.add_argument("--lrate_relative_pose_estimation", type=float, default=0.01,
                         help='Initial learning rate')
@@ -102,3 +107,60 @@ def extra_config_parser(parser):
                         help='List of Gaussian noise std to be injected into simulation')   
 
     return parser
+
+class Renderer():
+    def __init__(self, render_kwargs):
+
+        self.embed_fn = render_kwargs['embed_fn']
+        self.embeddirs_fn = render_kwargs['embeddirs_fn']
+        self.chunksize = render_kwargs['chunksize']
+        self.network_fn = render_kwargs['model']
+
+    def eval_model(self, pts, viewdirs=torch.tensor([[1., 1., 1.]]).to(device)):
+        pts_flat = pts.reshape((-1, pts.shape[-1]))
+        embedded = self.embed_fn(pts_flat)
+        if self.embeddirs_fn is not None:
+            input_dirs = viewdirs.expand(pts.shape)
+            input_dirs_flat = input_dirs.reshape((-1, input_dirs.shape[-1]))
+            embedded_dirs = self.embeddirs_fn(input_dirs_flat)
+            embedded = torch.cat((embedded, embedded_dirs), dim=-1)
+
+        batches = get_minibatches(embedded, chunksize=self.chunksize)
+        preds = [self.network_fn(batch) for batch in batches]
+        radiance_field = torch.cat(preds, dim=0)
+        radiance_field = radiance_field.reshape(
+            list(pts.shape[:-1]) + [radiance_field.shape[-1]]
+        )
+        return torch.sigmoid(radiance_field[..., 3]-1)
+
+    def get_density_from_pt(self, pts: TensorType[1, 'N_points', 3], viewdirs=torch.tensor([[1., 1., 1.]])) -> TensorType['N_points']:
+
+        "[N_rays, N_samples, 3] input for pt ([1, N_points, 3]) in this case. View_dir does not matter, but must be given to network. Returns density of size N_points)"
+
+        run_fn = self.network_fn if self.network_fine is None else self.network_fine
+        #raw = run_network(pts, fn=run_fn)
+        raw = self.network_query_fn(pts, viewdirs, run_fn)
+
+        #Make sure differential densities are non-negative
+        # density = F.relu(raw[..., 3])
+        density = torch.sigmoid(raw[..., 3] - 1)
+
+        return density.reshape(-1)
+
+    @typechecked
+    def get_density(self, points: TensorType["batch":..., 3]) -> TensorType["batch":...]:
+        out_shape = points.shape[:-1]
+        points = points.reshape(1, -1, 3)
+
+        # +z in nerf is -y in blender
+        # +y in nerf is +z in blender
+        # +x in nerf is +x in blender
+        #mapping = torch.tensor([[1, 0, 0],
+        #                        [0, 0, 1],
+        #                        [0,-1, 0]], dtype=torch.float)
+
+        #points = points @ mapping.T
+        points = points.to(device)
+
+        output = self.eval_model(points)
+        return output.reshape(*out_shape)
