@@ -74,7 +74,7 @@ def simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, model_coarse, model_
     render_kwargs = {
         'embed_fn': encode_position_fn,
         'embeddirs_fn': encode_direction_fn,
-        'chunksize': 131000,
+        'chunksize': 1500000,
         'model': model_fine
     }
 
