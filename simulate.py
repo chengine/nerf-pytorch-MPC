@@ -9,9 +9,6 @@ import math
 import shutil
 import pathlib
 
-from torchtyping import TensorDetail, TensorType
-from typeguard import typechecked
-
 from tqdm import tqdm, trange
 
 import matplotlib.pyplot as plt
@@ -24,19 +21,17 @@ import yaml
 #from torch.utils.tensorboard import SummaryWriter
 
 # Import Helper Classes
-from estimator_helpers import Estimator, estimate_relative_pose
+from estimator_helpers import Estimator
 from agent_helpers import Agent
 from quad_plot import System
-from quad_helpers import Simulator, QuadPlot
-from quad_helpers import rot_matrix_to_vec, vec_to_rot_matrix, next_rotation
-from mpc_utils import state2pose, extra_config_parser, Renderer
+from quad_helpers import vec_to_rot_matrix
+from mpc_utils import extra_config_parser, Renderer
 from pose_estimate import rot_psi, rot_theta, rot_phi, trans_t
-
 from nerf import (CfgNode, get_embedding_function,
                   load_blender_data, load_llff_data, models)
 
 DEBUG = False
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 nerf_filter = True
 
 ####################### MAIN LOOP ##########################################
@@ -103,7 +98,7 @@ def simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, model_coarse, model_
             then = time.time()
             traj.a_star_init()
             now = time.time()
-            print('A* takes', time.time() - now)
+            print('A* takes', now - then)
 
             traj.learn_init()
             print('Initial Path takes', time.time() - now)
@@ -168,6 +163,7 @@ def simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, model_coarse, model_
 
                 #measured_states.append(measured_state.cpu().detach().numpy().tolist())
 
+                torch.cuda.empty_cache()
                 then = time.time()
                 state_est = filter.estimate_state(gt_img, true_pose, action,
                     model_coarse=model_coarse, model_fine=model_fine,cfg=cfg, encode_position_fn=encode_position_fn,
@@ -303,7 +299,15 @@ if __name__ == "__main__":
     H, W, focal, i_train, i_val, i_test = None, None, None, None, None, None
 
     #TODO: Implement CACHED DATASET!
-
+    '''
+    if hasattr(cfg.dataset, "cachedir") and os.path.exists(cfg.dataset.cachedir):
+        train_paths = glob.glob(os.path.join(cfg.dataset.cachedir, "train", "*.data"))
+        validation_paths = glob.glob(
+            os.path.join(cfg.dataset.cachedir, "val", "*.data")
+        )
+        USE_CACHED_DATASET = True
+    else:
+        '''
     # Load dataset
     images, poses, render_poses, hwf = None, None, None, None
     if cfg.dataset.type.lower() == "blender":
@@ -388,6 +392,15 @@ if __name__ == "__main__":
         )
         model_fine.to(device)
 
+    '''
+    # Initialize optimizer.
+    trainable_parameters = list(model_coarse.parameters())
+    if model_fine is not None:
+        trainable_parameters += list(model_fine.parameters())
+    optimizer = getattr(torch.optim, cfg.optimizer.type)(
+        trainable_parameters, lr=cfg.optimizer.lr
+    )
+    '''
     # Load an existing checkpoint, if a path is specified.
     if os.path.exists(configargs.load_checkpoint):
         checkpoint = torch.load(configargs.load_checkpoint)
@@ -462,7 +475,7 @@ if __name__ == "__main__":
     agent_cfg = {'dt': planner_cfg["T_final"]/planner_cfg["steps"],
                 'mass': cfg_dict['mass'],
                 'g': cfg_dict['g'],
-                'I': torch.tensor(cfg_dict['I']).float().cuda(),
+                'I': torch.tensor(cfg_dict['I']).float().to(device),
                 'path': cfg_dict['path'], 
                 'half_res': cfg.dataset.half_res, 
                 'white_bg': cfg.nerf.train.white_background}
@@ -476,9 +489,9 @@ if __name__ == "__main__":
         'sampling_strategy': cfg_dict['sampling_strategy'],
         'reject_thresh': cfg_dict['reject_thresh'],
         'N_iter': cfg_dict['N_iter'],
-        'sig0': torch.tensor(cfg_dict['sig0']).float().cuda(),
-        'Q': torch.tensor(cfg_dict['Q']).float().cuda(),
-        'R': torch.tensor(cfg_dict['R']).float().cuda(),
+        'sig0': torch.tensor(cfg_dict['sig0']).float().to(device),
+        'Q': torch.tensor(cfg_dict['Q']).float().to(device),
+        'R': torch.tensor(cfg_dict['R']).float().to(device),
         'H': H,
         'W': W,
         'focal': focal
@@ -489,19 +502,5 @@ if __name__ == "__main__":
         'mpc_noise_std': np.array([float(i) for i in cfg_dict['mpc_noise_std']]),
         'mpc_noise_mean': np.array([float(i) for i in cfg_dict['mpc_noise_mean']])
     }
-
-    '''
-    relative_pose_image_idx = 11  # Take first image as one to use
-    obs_img = images[i_test[relative_pose_image_idx]]
-    sensor_image = np.asarray(obs_img*255, dtype=np.uint8)
-    gt_pose = poses[i_test[relative_pose_image_idx]]
-
-    gt_pose = gt_pose.cpu().numpy()
-
-    start_pose = trans_t(cfg_dict['delta_t']) @ rot_phi(cfg_dict['delta_phi']/180.*np.pi) @ rot_theta(cfg_dict['delta_theta']/180.*np.pi) @ rot_psi(cfg_dict['delta_psi']/180.*np.pi) @ gt_pose
-
-    estimate_relative_pose(sensor_image, start_pose, obs_img_pose=gt_pose, obs_img=None, model_coarse=model_coarse, model_fine=model_fine,cfg=cfg,
-    encode_position_fn=encode_position_fn, encode_direction_fn=encode_direction_fn, dil_iter=3, kernel_size=5, lrate=0.005, batch_size=256, H=H, W=W, focal=focal, reject_thresh=0.6)
-    '''
 
     simulate(planner_cfg, agent_cfg, filter_cfg, extra_cfg, model_coarse, model_fine, cfg, encode_position_fn, encode_direction_fn)

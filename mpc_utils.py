@@ -1,7 +1,5 @@
 import numpy as np
 import torch
-from torchtyping import TensorDetail, TensorType
-from typeguard import typechecked
 from nerf.nerf_helpers import get_minibatches
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -133,7 +131,7 @@ class Renderer():
         )
         return torch.sigmoid(radiance_field[..., 3]-1)
 
-    def get_density_from_pt(self, pts: TensorType[1, 'N_points', 3], viewdirs=torch.tensor([[1., 1., 1.]])) -> TensorType['N_points']:
+    def get_density_from_pt(self, pts, viewdirs=torch.tensor([[1., 1., 1.]]).to(device)):
 
         "[N_rays, N_samples, 3] input for pt ([1, N_points, 3]) in this case. View_dir does not matter, but must be given to network. Returns density of size N_points)"
 
@@ -147,8 +145,7 @@ class Renderer():
 
         return density.reshape(-1)
 
-    @typechecked
-    def get_density(self, points: TensorType["batch":..., 3]) -> TensorType["batch":...]:
+    def get_density(self, points):
         out_shape = points.shape[:-1]
         points = points.reshape(1, -1, 3)
 

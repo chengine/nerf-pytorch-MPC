@@ -1,5 +1,4 @@
 import torch
-torch.autograd.set_detect_anomaly(True)
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
@@ -10,22 +9,21 @@ import heapq
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-from torchtyping import TensorType, patch_typeguard
-from typeguard import typechecked
+#from torchtyping import TensorType, patch_typeguard
+#from typeguard import typechecked
 
-patch_typeguard()
+#patch_typeguard()
 
 #from load_nerf import get_nerf
 
-torch.manual_seed(0)
-np.random.seed(0)
+#torch.manual_seed(0)
+#np.random.seed(0)
 
 import time
 
 class Simulator:
 
-    @typechecked
-    def __init__(self, start_state: TensorType[18]):
+    def __init__(self, start_state):
         self.states = start_state[None, :]
 
         self.mass = 1
@@ -34,23 +32,19 @@ class Simulator:
         self.dt = 0.1
         self.g = 10
 
-    @typechecked
-    def add_state(self, state: TensorType[18]):
+    def add_state(self, state):
         self.states = torch.cat( [self.states, state[None,:] ], dim=0 )
 
-    @typechecked
-    def copy_states(self, states: TensorType["states", 18]):
+    def copy_states(self, states):
         self.states = states
 
-    @typechecked
-    def advance(self, action: TensorType[4], state_noise: TensorType[18] = None):
+    def advance(self, action, state_noise=None):
         if state_noise == None:
             state_noise = 0
         next_state = self.next_state(self.states[-1, :], action) + state_noise
         self.states = torch.cat( [self.states, next_state[None,:] ], dim=0 )
 
-    @typechecked
-    def advance_smooth(self, action: TensorType[4], detail = 5):
+    def advance_smooth(self, action, detail = 5):
         cur = self.states[-1, :]
 
         for _ in range(detail):
@@ -58,12 +52,10 @@ class Simulator:
 
         self.states = torch.cat( [self.states, cur[None,:] ], dim=0 )
 
-    @typechecked
-    def get_current_state(self) -> TensorType[18]:
+    def get_current_state(self):
         return self.states[-1,:]
 
-    @typechecked
-    def body_to_world(self, points: TensorType["batch", 3]) -> TensorType["states", "batch", 3]:
+    def body_to_world(self, points):
         pos = self.states[:, 0:3]
         v   = self.states[:, 3:6]
         R_flat = self.states[:, 6:15]
@@ -74,8 +66,7 @@ class Simulator:
         world_points =  R @ points.T + pos[..., None]
         return world_points.swapdims(-1,-2)
 
-    @typechecked
-    def next_state(self, state: TensorType[18], action: TensorType[4], dt = None):
+    def next_state(self, state, action, dt = None):
         #State is 18 dimensional [pos(3), vel(3), R (9), omega(3)] where pos, vel are in the world frame, R is the rotation from points in the body frame to world frame
         if dt == None:
             dt = self.dt
@@ -208,7 +199,7 @@ class QuadPlot:
         # plt.close(self.fig)
 
 
-def next_rotation(R: TensorType[3,3], omega: TensorType[3], dt) -> TensorType[3,3]:
+def next_rotation(R, omega, dt):
     # Propagate rotation matrix using exponential map of the angle displacements
     angle = omega*dt
     theta = torch.norm(angle, p=2)
@@ -282,10 +273,6 @@ def astar(occupied, start, goal):
 
     raise ValueError("Failed to find path!")
 
-
-
-
-
 def settings():
     pass
     #PARAM
@@ -350,9 +337,7 @@ def settings():
     start_vel = torch.tensor([0, 0, 0, 0])
     end_vel   = torch.tensor([0, 0, 0, 0])
 
-
-@typechecked
-def rot_matrix_to_vec( R: TensorType["batch":..., 3, 3]) -> TensorType["batch":..., 3]:
+def rot_matrix_to_vec(R):
     batch_dims = R.shape[:-2]
 
     trace = torch.diagonal(R, dim1=-2, dim2=-1).sum(-1)
@@ -395,8 +380,7 @@ def rot_matrix_to_vec( R: TensorType["batch":..., 3, 3]) -> TensorType["batch":.
 
     return rot_vec
 
-@typechecked
-def vec_to_rot_matrix(rot_vec: TensorType["batch":..., 3]) -> TensorType["batch":..., 3,3]:
+def vec_to_rot_matrix(rot_vec):
     assert not torch.any(torch.isnan(rot_vec))
 
     angle = torch.norm(rot_vec, dim=-1, keepdim=True)
@@ -413,8 +397,7 @@ def vec_to_rot_matrix(rot_vec: TensorType["batch":..., 3]) -> TensorType["batch"
             )
     return rot_matrix
 
-@typechecked
-def skew_matrix(vec: TensorType["batch":..., 3]) -> TensorType["batch":..., 3,3]:
+def skew_matrix(vec):
     batch_dims = vec.shape[:-1]
     S = torch.zeros(*batch_dims, 3, 3)
     S[..., 0, 1] = -vec[..., 2]

@@ -13,10 +13,10 @@ vec_to_rot_matrix = lambda x: R.as_matrix(R.from_rotvec(x))
 
 rot_matrix_to_vec = lambda y: R.as_rotvec(R.from_matrix(y))
 
-rot_x = lambda phi: np.array([
+rot_x = lambda phi: torch.tensor([
         [1., 0., 0.],
-        [0., np.cos(phi), -np.sin(phi)],
-        [0., np.sin(phi), np.cos(phi)]], dtype=np.float32)
+        [0., torch.cos(phi), -torch.sin(phi)],
+        [0., torch.sin(phi), torch.cos(phi)]], dtype=torch.float32)
 
 def skew_matrix_torch(vector):  # vector to skewsym. matrix
 
@@ -81,11 +81,11 @@ class Agent():
 
         self.x = newstate_noise
 
-        new_state = newstate_noise.clone().cpu().detach().numpy()
+        new_state = newstate_noise.clone().detach()
 
         ### IMPORTANT: ACCOUNT FOR CAMERA ORIENTATION WRT DRONE ORIENTATION
-        new_pose = np.zeros((4, 4))
-        new_pose[:3, :3] = rot_x(np.pi/2) @ (new_state[6:15]).reshape((3, 3))
+        new_pose = torch.zeros((4, 4))
+        new_pose[:3, :3] = rot_x(torch.tensor(np.pi/2)) @ (new_state[6:15]).reshape((3, 3))
         new_pose[:3, 3] = new_state[:3]
         new_pose[3, 3] = 1.
 
@@ -93,12 +93,14 @@ class Agent():
         path_to_pose = self.path + f'/{self.iter}.json'
         self.write_transform(new_pose, path_to_pose)
         path_to_img = self.path + f'/{self.iter}.png'
-        img = self.listen_img(path_to_img)
-        self.img = img
+        img = torch.from_numpy(self.listen_img(path_to_img))
+        #self.img = img
         self.states_history.append(self.x.clone().cpu().detach().numpy().tolist())
         self.iter += 1
 
-        return new_pose, new_state, img
+        img = np.asarray(img*255, dtype=np.uint8)
+
+        return new_pose.cpu().numpy(), new_state.cpu().numpy(), img
 
     def state2image(self, state):
         # Directly update the stored state and receive the image
@@ -167,7 +169,7 @@ class Agent():
 
         next_state[15:] = omega + domega * self.dt
 
-        return next_state
+        return next_state.clone().detach()
 
     def write_transform(self, transform, filename):
         with open(filename,"w+") as f:

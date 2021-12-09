@@ -26,6 +26,11 @@ rot_x = lambda phi: torch.tensor([
         [0., torch.cos(phi), -torch.sin(phi)],
         [0., torch.sin(phi), torch.cos(phi)]], dtype=torch.float32)
 
+rot_x_np = lambda phi: np.array([
+        [1., 0., 0.],
+        [0., np.cos(phi), -np.sin(phi)],
+        [0., np.sin(phi), np.cos(phi)]], dtype=np.float32)
+
 rot_psi = lambda phi: np.array([
         [1, 0, 0, 0],
         [0, np.cos(phi), -np.sin(phi), 0],
@@ -192,9 +197,10 @@ class Estimator():
             self.pixel_losses[f'{self.iteration}'] = []
             self.dyn_losses[f'{self.iteration}'] = []
             self.states[f'{self.iteration}'] = []
-            return start_state.detach(), False
+            return start_state.clone().detach(), False
 
         obs_img_noised = (np.array(obs_img_noised) / 255.).astype(np.float32)
+        obs_img_noised = torch.tensor(obs_img_noised).cuda()
 
         #sensor_image[POI[:, 1], POI[:, 0]] = [0, 255, 0]
 
@@ -215,24 +221,22 @@ class Estimator():
         #not_POI = np.array([list(point) for point in not_POI]).astype(int)
 
         #Break up state into components
-        start_state = torch.tensor(start_state.detach()).to(device)
         start_trans = start_state[:3].reshape((3, 1))
 
         ### IMPORTANT: ROTATION MATRIX IS ROTATED BY SOME AMOUNT TO ACCOUNT FOR CAMERA ORIENTATION
-        start_rot = rot_x(torch.tensor(np.pi/2)) @ start_state[6:15].reshape((3, 3))
-        start_pose = torch.cat((start_rot, start_trans), axis=1)
-        start_pose = start_pose.detach().clone()
+        start_rot = rot_x_np(np.pi/2) @ start_state[6:15].reshape((3, 3))
+        start_pose = np.concatenate((start_rot, start_trans), axis=1)
 
-        start_vel = torch.tensor(start_state[3:6].detach().clone())
-        start_vel = start_vel.detach().requires_grad_()
-        start_omega = torch.tensor(start_state[15:].detach().clone())
-        start_omega = start_omega.detach().requires_grad_()
+        start_vel = torch.tensor(start_state[3:6]).cuda()
+        start_omega = torch.tensor(start_state[15:]).cuda()   
 
         # Create pose transformation model
-        start_pose = SE3_to_trans_and_quat(start_pose.cpu().numpy())
+        start_pose = SE3_to_trans_and_quat(start_pose)
 
         starting_pose = SE3(torch.from_numpy(start_pose).float().cuda())
-        starting_pose = LieGroupParameter(starting_pose)
+        starting_pose = LieGroupParameter(starting_pose).cuda()
+
+        #print('Start pose', start_pose, start_vel, start_omega)
 
         # Add velocities, omegas, and pose object to optimizer
         if self.is_filter is True:
@@ -265,14 +269,15 @@ class Estimator():
             batch = interest_regions[rand_inds]
 
             target_s = obs_img_noised[batch[:, 1], batch[:, 0]]
-            target_s = torch.Tensor(target_s).to(device)
+            #target_s = torch.Tensor(target_s).to(device)
 
             pose = starting_pose.retr().matrix()[:3, :4]
 
             ray_origins, ray_directions = get_ray_bundle(self.H, self.W, self.focal, pose)  # (H, W, 3), (H, W, 3)
-            with torch.no_grad():
-                r_o, r_d = ray_origins, ray_directions
+            #with torch.no_grad():
+            #    r_o, r_d = ray_origins, ray_directions
 
+            #print('Ray origins cuda', ray_origins.is_cuda)
             ray_origins = ray_origins[batch[:, 1], batch[:, 0], :]
             ray_directions = ray_directions[batch[:, 1], batch[:, 0], :]
 
@@ -290,13 +295,15 @@ class Estimator():
                 encode_position_fn=encode_position_fn,
                 encode_direction_fn=encode_direction_fn,
             )
-            target_ray_values = target_s
+            #target_ray_values = target_s
+
+            #print(time.time() - then)
 
             ### OUTLIER REJECTION
             threshold = self.reject_thresh
             with torch.no_grad():
-                coarse_sample_loss = torch.sum(torch.abs(rgb_coarse[..., :3] - target_ray_values[..., :3]), 1)/3
-                fine_sample_loss = torch.sum(torch.abs(rgb_fine[..., :3] - target_ray_values[..., :3]), 1)/3
+                coarse_sample_loss = torch.sum(torch.abs(rgb_coarse[..., :3] - target_s[..., :3]), 1)/3
+                fine_sample_loss = torch.sum(torch.abs(rgb_fine[..., :3] - target_s[..., :3]), 1)/3
                 csl = F.relu(-(coarse_sample_loss-threshold))
                 fsl = F.relu(-(fine_sample_loss-threshold))
                 coarse_ind = torch.nonzero(csl)
@@ -304,12 +311,12 @@ class Estimator():
             ### ---------------- ###
             
             coarse_loss = torch.nn.functional.mse_loss(
-                rgb_coarse[coarse_ind, :3], target_ray_values[coarse_ind, :3]
+                rgb_coarse[coarse_ind, :3], target_s[coarse_ind, :3]
             )
             fine_loss = None
             if rgb_fine is not None:
                 fine_loss = torch.nn.functional.mse_loss(
-                    rgb_fine[fine_ind, :3], target_ray_values[fine_ind, :3]
+                    rgb_fine[fine_ind, :3], target_s[fine_ind, :3]
                 )
             
             loss = coarse_loss + (fine_loss if fine_loss is not None else 0.0)
@@ -317,7 +324,7 @@ class Estimator():
             pix_losses.append(loss.clone().cpu().detach().numpy().tolist())
             #Add dynamics loss
             state = torch.cat((pose[:3, 3], start_vel, (rot_x(torch.tensor(-np.pi/2)) @ pose[:3, :3]).reshape(-1), start_omega), dim=0)
-            dyn_loss = mahalanobis(state, start_state, sig)
+            dyn_loss = mahalanobis(state, torch.tensor(start_state), sig)
 
             states.append(state.clone().cpu().detach().numpy().tolist())
             dyn_losses.append(dyn_loss.clone().cpu().detach().numpy().tolist())
@@ -340,7 +347,7 @@ class Estimator():
                 print('Loss: ', loss)
 
                 with torch.no_grad():
-                    pose_dummy = starting_pose.retr().matrix().cpu().detach().numpy()
+                    pose_dummy = starting_pose.retr().matrix().clone().cpu().detach().numpy()
                     # calculate angles and translation of the optimized pose
                     phi = np.arctan2(pose_dummy[1, 0], pose_dummy[0, 0]) * 180 / np.pi
                     theta = np.arctan2(-pose_dummy[2, 0], np.sqrt(pose_dummy[2, 1] ** 2 + pose_dummy[2, 2] ** 2)) * 180 / np.pi
@@ -387,7 +394,7 @@ class Estimator():
         self.pixel_losses[f'{self.iteration}'] = pix_losses
         self.dyn_losses[f'{self.iteration}'] = dyn_losses
         self.states[f'{self.iteration}'] = states
-        return state.detach(), True
+        return state.clone().detach(), True
         
     def measurement_function(self, state, start_state, sig, model_coarse=None, model_fine=None,cfg=None,
     encode_position_fn=None, encode_direction_fn=None):
@@ -400,7 +407,7 @@ class Estimator():
         pose_mat = torch.cat((rot_mat, trans), dim=1)
 
         #Process loss. 
-        loss_dyn = mahalanobis(state, start_state, sig)
+        loss_dyn = mahalanobis(state, torch.tensor(start_state), sig)
 
         #TODO: CONVERT STATE INTO POSE
         ray_origins, ray_directions = get_ray_bundle(self.H, self.W, self.focal, pose_mat)  # (H, W, 3), (H, W, 3)
@@ -456,21 +463,22 @@ class Estimator():
         # Perform grad. descent on J = measurement loss + process loss
         # Compute state covariance Sig_{t} by hessian at state at time t.
 
-        with torch.no_grad():
-            #Propagated dynamics. x t|t-1
-            start_state = self.agent.drone_dynamics(self.xt, action)
+        #with torch.no_grad():
+        #Propagated dynamics. x t|t-1
+        start_state = self.agent.drone_dynamics(self.xt, action)
+        start_state = start_state.cpu().numpy()
 
-            #State estimate at t-1 is self.xt. Find jacobian wrt dynamics
-            t1 = time.time()
+        #State estimate at t-1 is self.xt. Find jacobian wrt dynamics
+        t1 = time.time()
     
         A = torch.autograd.functional.jacobian(lambda x: self.agent.drone_dynamics(x, action), self.xt)
 
-        with torch.no_grad():
-            t2 = time.time()
-            #print('Elapsed time for Jacobian', t2-t1)
+        #with torch.no_grad():
+        t2 = time.time()
+        #print('Elapsed time for Jacobian', t2-t1)
 
-            #Propagate covariance
-            sig_prop = A @ self.sig @ A.T + self.Q
+        #Propagate covariance
+        sig_prop = A @ self.sig @ A.T + self.Q
 
         #Argmin of total cost. Encapsulate this argmin optimization as a function call
         then = time.time()
@@ -478,36 +486,36 @@ class Estimator():
             model_coarse=model_coarse, model_fine=model_fine,cfg=cfg, encode_position_fn=encode_position_fn, encode_direction_fn=encode_direction_fn)
         
         print('Optimization step for filter', time.time()-then)
-        with torch.no_grad():
-            #Update state estimate
-            self.xt = xt
+        #with torch.no_grad():
+        #Update state estimate
+        self.xt = xt
 
-            #Hessian to get updated covariance
-            t3 = time.time()
+        #Hessian to get updated covariance
+        t3 = time.time()
         
         if self.is_filter is True and success_flag is True:
             hess = torch.autograd.functional.hessian(lambda x: self.measurement_function(x, start_state, sig_prop, model_coarse=model_coarse, 
                 model_fine=model_fine,cfg=cfg, encode_position_fn=encode_position_fn, encode_direction_fn=encode_direction_fn), self.xt)
 
-            with torch.no_grad():
-                #Turn covariance into positive definite
-                hess_np = hess.cpu().detach().numpy()
-                hess = nearestPD(hess_np)
+            #with torch.no_grad():
+            #Turn covariance into positive definite
+            hess_np = hess.clone().cpu().detach().numpy()
+            hess = nearestPD(hess_np)
 
-                t4 = time.time()
-                print('Elapsed time for hessian', t4-t3)
+            t4 = time.time()
+            print('Elapsed time for hessian', t4-t3)
 
-                #self.sig_det.append(np.linalg.det(sig.cpu().numpy()))
+            #self.sig_det.append(np.linalg.det(sig.cpu().numpy()))
 
-                #Update state covariance
-                self.sig = torch.inverse(torch.tensor(hess))
+            #Update state covariance
+            self.sig = torch.inverse(torch.tensor(hess))
 
                 #print(self.sig)
 
                 #print('Start state', start_state)
 
         self.actions.append(action.clone().cpu().detach().numpy().tolist())
-        self.predicted_states.append(start_state.clone().cpu().detach().numpy().tolist())
+        self.predicted_states.append(start_state.tolist())
         self.covariance.append(self.sig.clone().cpu().detach().numpy().tolist())
         self.state_estimates.append(self.xt.clone().cpu().detach().numpy().tolist())
 
@@ -528,151 +536,3 @@ class Estimator():
         with open(filename,"w+") as f:
             json.dump(data, f)
         return
-
-def estimate_relative_pose(sensor_image, start_pose, obs_img_pose=None, obs_img=None, model_coarse=None, model_fine=None,cfg=None,
-    encode_position_fn=None, encode_direction_fn=None, dil_iter=3, kernel_size=5, lrate=0.005, batch_size=256, H=None, W=None, focal=None, reject_thresh=0.6):
-
-    b_print_comparison_metrics = obs_img_pose is not None
-    b_generate_overlaid_images = b_print_comparison_metrics and obs_img is not None
-
-    obs_img_noised = sensor_image
-    W_obs = sensor_image.shape[0]
-    H_obs = sensor_image.shape[1]
-
-     # find points of interest of the observed image
-    POI = find_POI(obs_img_noised, False)  # xy pixel coordinates of points of interest (N x 2)
-    obs_img_noised = (np.array(obs_img_noised) / 255.).astype(np.float32)
-
-    # create meshgrid from the observed image
-    coords = np.asarray(np.stack(np.meshgrid(np.linspace(0, W_obs - 1, W_obs), np.linspace(0, H_obs - 1, H_obs)), -1), dtype=int)
-
-    # create sampling mask for interest region sampling strategy
-    interest_regions = np.zeros((H_obs, W_obs, ), dtype=np.uint8)
-    interest_regions[POI[:,1], POI[:,0]] = 1
-    I = dil_iter
-    interest_regions = cv2.dilate(interest_regions, np.ones((kernel_size, kernel_size), np.uint8), iterations=I)
-    interest_regions = np.array(interest_regions, dtype=bool)
-    interest_regions = coords[interest_regions]
-
-    # not_POI contains all points except of POI
-    coords = coords.reshape(H_obs * W_obs, 2)
-    #not_POI = set(tuple(point) for point in coords) - set(tuple(point) for point in POI)
-    #not_POI = np.array([list(point) for point in not_POI]).astype(int)
-
-    # Create pose transformation model
-    start_pose = SE3_to_trans_and_quat(start_pose)
-
-    starting_pose = SE3(torch.from_numpy(start_pose).float().cuda())
-    starting_pose = LieGroupParameter(starting_pose)
-    optimizer = torch.optim.Adam(params=[starting_pose], lr=lrate, betas=(0.9, 0.999))
-
-    # calculate angles and translation of the observed image's pose
-    if b_print_comparison_metrics:
-        phi_ref = np.arctan2(obs_img_pose[1,0], obs_img_pose[0,0])*180/np.pi
-        theta_ref = np.arctan2(-obs_img_pose[2, 0], np.sqrt(obs_img_pose[2, 1]**2 + obs_img_pose[2, 2]**2))*180/np.pi
-        psi_ref = np.arctan2(obs_img_pose[2, 1], obs_img_pose[2, 2])*180/np.pi
-        translation_ref = np.sqrt(obs_img_pose[0,3]**2 + obs_img_pose[1,3]**2 + obs_img_pose[2,3]**2)
-
-    #testsavedir = os.path.join(extra_arg_dict['output_dir'], extra_arg_dict['model_name'])
-    #os.makedirs(testsavedir, exist_ok=True)
-
-    # imgs - array with images are used to create a video of optimization process
-    if b_generate_overlaid_images:
-        imgs = []
-
-    for k in range(300):
-        model_coarse.eval()
-        if model_fine:
-            model_fine.eval()
-
-        rgb_coarse, rgb_fine = None, None
-
-        # TODO: IMPLEMENT INERF WITH USE_CACHED DATSET!!!
-
-        rand_inds = np.random.choice(interest_regions.shape[0], size=batch_size, replace=False)
-        batch = interest_regions[rand_inds]
-
-        target_s = obs_img_noised[batch[:, 1], batch[:, 0]]
-        target_s = torch.Tensor(target_s).to(device)
-
-        ray_origins, ray_directions = get_ray_bundle(H, W, focal, starting_pose.retr().matrix()[:3, :4])  # (H, W, 3), (H, W, 3)
-        with torch.no_grad():
-            r_o, r_d = ray_origins, ray_directions
-
-        ray_origins = ray_origins[batch[:, 1], batch[:, 0], :]
-        ray_directions = ray_directions[batch[:, 1], batch[:, 0], :]
-        # batch_rays = torch.stack([ray_origins, ray_directions], dim=0)
-
-        #then = time.time()
-        rgb_coarse, _, _, rgb_fine, _, _ = run_one_iter_of_nerf(
-            H,
-            W,
-            focal,
-            model_coarse,
-            model_fine,
-            ray_origins,
-            ray_directions,
-            cfg,
-            mode="validation",
-            encode_position_fn=encode_position_fn,
-            encode_direction_fn=encode_direction_fn,
-        )
-        #print(time.time() - then)
-        target_ray_values = target_s
-
-        
-        ### OUTLIER REJECTION
-        threshold = 0.6
-        with torch.no_grad():
-            coarse_sample_loss = torch.sum(torch.abs(rgb_coarse[..., :3] - target_ray_values[..., :3]), 1)/3
-            fine_sample_loss = torch.sum(torch.abs(rgb_fine[..., :3] - target_ray_values[..., :3]), 1)/3
-            csl = F.relu(-(coarse_sample_loss-threshold))
-            fsl = F.relu(-(fine_sample_loss-threshold))
-            coarse_ind = torch.nonzero(csl)
-            fine_ind = torch.nonzero(fsl)
-        ### ---------------- ###
-        
-        coarse_loss = torch.nn.functional.mse_loss(
-            rgb_coarse[coarse_ind, :3], target_ray_values[coarse_ind, :3]
-        )
-        fine_loss = None
-        if rgb_fine is not None:
-            fine_loss = torch.nn.functional.mse_loss(
-                rgb_fine[fine_ind, :3], target_ray_values[fine_ind, :3]
-            )
-        
-        loss = coarse_loss + (fine_loss if fine_loss is not None else 0.0)
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-
-        new_lrate = lrate * (0.8 ** ((k + 1) / 100))
-        #new_lrate = extra_arg_dict['lrate'] * np.exp(-(k)/1000)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = new_lrate
-
-        # print results periodically
-        if b_print_comparison_metrics and ((k + 1) % 20 == 0 or k == 0):
-            print('Step: ', k)
-            print('Loss: ', loss)
-
-            with torch.no_grad():
-                pose_dummy = starting_pose.retr().matrix().cpu().detach().numpy()
-                # calculate angles and translation of the optimized pose
-                phi = np.arctan2(pose_dummy[1, 0], pose_dummy[0, 0]) * 180 / np.pi
-                theta = np.arctan2(-pose_dummy[2, 0], np.sqrt(pose_dummy[2, 1] ** 2 + pose_dummy[2, 2] ** 2)) * 180 / np.pi
-                psi = np.arctan2(pose_dummy[2, 1], pose_dummy[2, 2]) * 180 / np.pi
-                translation = np.sqrt(pose_dummy[0,3]**2 + pose_dummy[1,3]**2 + pose_dummy[2,3]**2)
-                #translation = pose_dummy[2, 3]
-                # calculate error between optimized and observed pose
-                phi_error = abs(phi_ref - phi) if abs(phi_ref - phi)<300 else abs(abs(phi_ref - phi)-360)
-                theta_error = abs(theta_ref - theta) if abs(theta_ref - theta)<300 else abs(abs(theta_ref - theta)-360)
-                psi_error = abs(psi_ref - psi) if abs(psi_ref - psi)<300 else abs(abs(psi_ref - psi)-360)
-                rot_error = phi_error + theta_error + psi_error
-                translation_error = abs(translation_ref - translation)
-                print('Rotation error: ', rot_error)
-                print('Translation error: ', translation_error)
-                print('Number of rays accepted', len(fine_ind))
-                print('-----------------------------------')
-
-    print("Done with main relative_pose_estimation loop")

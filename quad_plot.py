@@ -1,6 +1,5 @@
 import torch
 from torch._C import device
-torch.autograd.set_detect_anomaly(True)
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
@@ -12,45 +11,44 @@ import pathlib
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-from torchtyping import TensorType, patch_typeguard
-from typeguard import typechecked
+#from torchtyping import TensorType, patch_typeguard
+#from typeguard import typechecked
 
-patch_typeguard()
+#patch_typeguard()
 
 #from load_nerf import get_nerf
 
-from quad_helpers import Simulator, QuadPlot
-from quad_helpers import rot_matrix_to_vec, vec_to_rot_matrix, next_rotation
+#from quad_helpers import Simulator, QuadPlot
+from quad_helpers import rot_matrix_to_vec, next_rotation
 from quad_helpers import astar
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # # hard coded "nerf" for testing. see below to import real nerf
-def get_manual_nerf(name):
-    if name =='empty':
-        class FakeRenderer:
-            @typechecked
-            def get_density(self, points: TensorType["batch":..., 3]) -> TensorType["batch":...]:
-                return torch.zeros_like( points[...,0] )
-        return FakeRenderer()
+# def get_manual_nerf(name):
+#     if name =='empty':
+#         class FakeRenderer:
+#             @typechecked
+#             def get_density(self, points: TensorType["batch":..., 3]) -> TensorType["batch":...]:
+#                 return torch.zeros_like( points[...,0] )
+#         return FakeRenderer()#
 
-    if name =='cylinder':
-        class FakeRenderer:
-            @typechecked
-            def get_density(self, points: TensorType["batch":..., 3]) -> TensorType["batch":...]:
-                x = points[..., 0]
-                y = points[..., 1] - 1
+#     if name =='cylinder':
+#         class FakeRenderer:
+#             @typechecked
+#             def get_density(self, points: TensorType["batch":..., 3]) -> TensorType["batch":...]:
+#                 x = points[..., 0]
+#                 y = points[..., 1] - 1
 
-                return torch.sigmoid( (2 -(x**2 + y**2)) * 8 )
-        return FakeRenderer()
+#                 return torch.sigmoid( (2 -(x**2 + y**2)) * 8 )
+#         return FakeRenderer()
 
-    raise ValueError
+#     raise ValueError
 
 
 
 class System:
-    @typechecked
-    def __init__(self, renderer, start_state: TensorType[18], end_state: TensorType[18], cfg):
+    def __init__(self, renderer, start_state, end_state, cfg):
         self.renderer = renderer
         self.nerf = renderer.get_density
 
@@ -93,8 +91,7 @@ class System:
 
         self.epoch = 0
 
-    @typechecked
-    def full_to_reduced_state(self, state: TensorType[18]) -> TensorType[4]:
+    def full_to_reduced_state(self, state):
         pos = state[:3]
         R = state[6:15].reshape((3,3))
 
@@ -159,16 +156,7 @@ class System:
     def params(self):
         return [self.initial_accel, self.states]
 
-    @typechecked
-    def calc_everything(self) -> (
-            TensorType["states", 3], #pos
-            TensorType["states", 3], #vel
-            TensorType["states", 3], #accel
-            TensorType["states", 3,3], #rot_matrix
-            TensorType["states", 3], #omega
-            TensorType["states", 3], #angualr_accel
-            TensorType["states", 4], #actions
-        ):
+    def calc_everything(self):
 
         start_pos   = self.start_state[None, 0:3]
         start_v     = self.start_state[None, 3:6]
@@ -248,11 +236,11 @@ class System:
 
         return current_pos, current_vel, current_accel, rot_matrix, current_omega, angular_accel, actions
 
-    def get_full_states(self) -> TensorType["states", 18]:
+    def get_full_states(self):
         pos, vel, accel, rot_matrix, omega, angular_accel, actions = self.calc_everything()
         return torch.cat( [pos, vel, rot_matrix.reshape(-1, 9), omega], dim=-1 )
 
-    def get_actions(self) -> TensorType["states", 4]:
+    def get_actions(self):
         pos, vel, accel, rot_matrix, omega, angular_accel, actions = self.calc_everything()
 
         if not torch.allclose( actions[:2, 0], self.initial_accel ):
@@ -260,20 +248,19 @@ class System:
             print(self.initial_accel)
         return actions
 
-    def get_next_action(self) -> TensorType[4]:
+    def get_next_action(self):
         actions = self.get_actions()
         # fz, tx, ty, tz
         return actions[0, :]
 
-    @typechecked
-    def body_to_world(self, points: TensorType["batch", 3]) -> TensorType["states", "batch", 3]:
+    def body_to_world(self, points):
         pos, vel, accel, rot_matrix, omega, angular_accel, actions = self.calc_everything()
 
         # S, 3, P    =    S,3,3       3,P       S, 3, _
         world_points =  rot_matrix @ points.T + pos[..., None]
         return world_points.swapdims(-1,-2)
 
-    def get_state_cost(self) -> TensorType["states"]:
+    def get_state_cost(self):
         pos, vel, accel, rot_matrix, omega, angular_accel, actions = self.calc_everything()
 
         fz = actions[:, 0].to(device)
@@ -352,15 +339,13 @@ class System:
                 else:
                     print("WANRING: data not saved!")
 
-    @typechecked
-    def update_state(self, measured_state: TensorType[18]):
+    def update_state(self, measured_state):
         pos, vel, accel, rot_matrix, omega, angular_accel, actions = self.calc_everything()
 
         self.start_state = measured_state
         self.states = self.states[1:, :].detach().requires_grad_(True)
         self.initial_accel = actions[1:3, 0].detach().requires_grad_(True)
         # print(self.initial_accel.shape)
-
 
     def plot(self, quadplot):
         quadplot.trajectory( self, "g" )
@@ -438,24 +423,25 @@ class System:
                     }
         torch.save(to_save, filename)
 
-    @classmethod
-    def load_progress(cls, filename, renderer=None):
-        # a note about loading: it won't load the optimiser learned step sizes
-        # so the first couple gradient steps can be quite bad
 
-        loaded_dict = torch.load(filename)
-        print(loaded_dict)
+    # def load_progress(cls, filename, renderer=None):
+    #     # a note about loading: it won't load the optimiser learned step sizes
+    #     # so the first couple gradient steps can be quite bad
 
-        if renderer == None:
-            assert loaded_dict['config_filename'] is not None
-            renderer = load_nerf(loaded_dict['config_filename'])
+    #     loaded_dict = torch.load(filename)
+    #     print(loaded_dict)
 
-        obj = cls(renderer, loaded_dict['start_state'], loaded_dict['end_state'], loaded_dict['cfg'])
-        obj.states = loaded_dict['states'].requires_grad_(True)
-        obj.initial_accel = loaded_dict['initial_accel'].requires_grad_(True)
+    #     if renderer == None:
+    #         assert loaded_dict['config_filename'] is not None
+    #         renderer = load_nerf(loaded_dict['config_filename'])
 
-        return obj
+    #     obj = cls(renderer, loaded_dict['start_state'], loaded_dict['end_state'], loaded_dict['cfg'])
+    #     obj.states = loaded_dict['states'].requires_grad_(True)
+    #     obj.initial_accel = loaded_dict['initial_accel'].requires_grad_(True)
 
+    #     return obj
+
+'''
 def main():
 
     # violin - astar
@@ -595,3 +581,4 @@ def OPEN_LOOP(traj):
 
 if __name__ == "__main__":
     main()
+'''

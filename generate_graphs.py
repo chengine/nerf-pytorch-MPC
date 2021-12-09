@@ -69,7 +69,7 @@ def find_l2_norm(input1, input2, predicted):
 
 #Name of folder
 base_dir = 'paths/'
-exp_name = 'stonehenge/'
+exp_name = 'stonehenge_data/'
 agent_name = 'agent_data_'
 filter_name = 'filter_data_'
 inerf_dyn_name = 'inerf_dyn_data_'
@@ -152,6 +152,8 @@ while True:
 print('Successfully read in data')
 
 matplotlib.rcParams.update({'font.size': 18})
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams['ps.fonttype'] = 42
 
 '''
 #Plot Losses
@@ -323,10 +325,10 @@ vel_dyn_neg = vel_dyn - vel_dyn_std
 omega_fil_neg = omega_fil - omega_fil_std
 omega_dyn_neg = omega_dyn - omega_dyn_std
 
-fig, ax = plt.subplots(4, figsize=(10, 25), dpi=80)
+fig, ax = plt.subplots(2, 2, figsize=(45, 30), dpi=200)
 # ANGULAR ERRORS
-ax[0].plot(list(range(len(ang_error_filter))), ang_error_filter, label='Filter', color='red')
-ax[0].plot(list(range(len(ang_error_inerf_dyn))), ang_error_inerf_dyn, label='INeRF W/ Dynamics', color='green')
+ax[0, 0].plot(list(range(len(ang_error_filter))), ang_error_filter, label='Filter', color='red', linewidth=5)
+ax[0, 0].plot(list(range(len(ang_error_inerf_dyn))), ang_error_inerf_dyn, label='INeRF W/ Dynamics',  color='green', linewidth=5)
 #ax[0].plot(list(range(len(angle_error1))), angle_error3, label='iNeRF')
 
 #ax[0].plot(list(range(len(ang_error_filter_pos))), ang_error_filter_pos, label='Filter Pos')
@@ -335,14 +337,14 @@ ax[0].plot(list(range(len(ang_error_inerf_dyn))), ang_error_inerf_dyn, label='IN
 #ax[0].plot(list(range(len(ang_error_filter_neg))), ang_error_filter_neg, label='Filter Neg')
 #ax[0].plot(list(range(len(ang_error_inerf_dyn_neg))), ang_error_inerf_dyn_neg, label='INeRF W/ Dynamics Neg')
 
-ax[0].fill_between(list(range(len(ang_error_filter_pos))), ang_error_filter_pos, ang_error_filter_neg, color='red',
+ax[0, 0].fill_between(list(range(len(ang_error_filter_pos))), ang_error_filter_pos, ang_error_filter_neg, color='red',
                  alpha=0.4)
-ax[0].fill_between(list(range(len(ang_error_inerf_dyn_pos))), ang_error_inerf_dyn_pos, ang_error_inerf_dyn_neg, color='green',
+ax[0, 0].fill_between(list(range(len(ang_error_inerf_dyn_pos))), ang_error_inerf_dyn_pos, ang_error_inerf_dyn_neg, color='green',
                  alpha=0.3)
 
 # POSITIONAL ERRORS
-ax[1].plot(list(range(len(pos_error_filter))), pos_error_filter, label='Filter', color='red')
-ax[1].plot(list(range(len(pos_error_inerf_dyn))), pos_error_inerf_dyn, label='INeRF W/ Dynamics', color='green')
+ax[0, 1].plot(list(range(len(pos_error_filter))), pos_error_filter, color='red', linewidth=5)
+ax[0, 1].plot(list(range(len(pos_error_inerf_dyn))), pos_error_inerf_dyn, color='green', linewidth=5)
 #ax[1].plot(list(range(len(pos_errors1))), pos_errors3, label='iNeRF')
 
 #ax[1].plot(list(range(len(pos_error_filter_pos))), pos_error_filter_pos, label='Filter Pos')
@@ -351,14 +353,14 @@ ax[1].plot(list(range(len(pos_error_inerf_dyn))), pos_error_inerf_dyn, label='IN
 #ax[1].plot(list(range(len(pos_error_filter_neg))), pos_error_filter_neg, label='Filter Neg')
 #ax[1].plot(list(range(len(pos_error_inerf_dyn_neg))), pos_error_inerf_dyn_neg, label='INeRF W/ Dynamics Neg')
 
-ax[1].fill_between(list(range(len(pos_error_filter_pos))), pos_error_filter_pos, pos_error_filter_neg, color='red',
+ax[0, 1].fill_between(list(range(len(pos_error_filter_pos))), pos_error_filter_pos, pos_error_filter_neg, color='red',
                  alpha=0.4)
-ax[1].fill_between(list(range(len(pos_error_inerf_dyn_pos))), pos_error_inerf_dyn_pos, pos_error_inerf_dyn_neg, color='green',
+ax[0, 1].fill_between(list(range(len(pos_error_inerf_dyn_pos))), pos_error_inerf_dyn_pos, pos_error_inerf_dyn_neg, color='green',
                  alpha=0.3)
 
 # VELOCITY ERRORS
-ax[2].plot(list(range(len(vel_fil))), vel_fil, label='Filter', color='red')
-ax[2].plot(list(range(len(vel_dyn))), vel_dyn, label='INeRF W/ Dynamics', color='green')
+ax[1, 1].plot(list(range(len(vel_fil))), vel_fil, color='red', linewidth=5)
+ax[1, 1].plot(list(range(len(vel_dyn))), vel_dyn, color='green', linewidth=5)
 
 #ax[2].plot(list(range(len(vel_fil_pos))), vel_fil_pos, label='Filter Pos')
 #ax[2].plot(list(range(len(vel_dyn_pos))), vel_dyn_pos, label='INeRF W/ Dynamics Pos')
@@ -366,14 +368,14 @@ ax[2].plot(list(range(len(vel_dyn))), vel_dyn, label='INeRF W/ Dynamics', color=
 #ax[2].plot(list(range(len(vel_fil_neg))), vel_fil_neg, label='Filter Neg')
 #ax[2].plot(list(range(len(vel_dyn_neg))), vel_dyn_neg, label='INeRF W/ Dynamics Neg')
 
-ax[2].fill_between(list(range(len(vel_fil_pos))), vel_fil_pos, vel_fil_neg, color='red',
+ax[1, 1].fill_between(list(range(len(vel_fil_pos))), vel_fil_pos, vel_fil_neg, color='red',
                  alpha=0.4)
-ax[2].fill_between(list(range(len(vel_dyn_pos))), vel_dyn_pos, vel_dyn_neg, color='green',
+ax[1, 1].fill_between(list(range(len(vel_dyn_pos))), vel_dyn_pos, vel_dyn_neg, color='green',
                  alpha=0.3)
 
 # OMEGA ERRORS
-ax[3].plot(list(range(len(omega_fil))), omega_fil, label='Filter', color='red')
-ax[3].plot(list(range(len(omega_dyn))), omega_dyn, label='INeRF W/ Dynamics', color='green')
+ax[1, 0].plot(list(range(len(omega_fil))), omega_fil, color='red', linewidth=5)
+ax[1, 0].plot(list(range(len(omega_dyn))), omega_dyn, color='green', linewidth=5)
 
 #ax[3].plot(list(range(len(omega_fil_pos))), omega_fil_pos, label='Filter Pos')
 #ax[3].plot(list(range(len(omega_dyn_pos))), omega_dyn_pos, label='INeRF W/ Dynamics Pos')
@@ -381,51 +383,61 @@ ax[3].plot(list(range(len(omega_dyn))), omega_dyn, label='INeRF W/ Dynamics', co
 #ax[3].plot(list(range(len(omega_fil_neg))), omega_fil_neg, label='Filter Neg')
 #ax[3].plot(list(range(len(omega_dyn_neg))), omega_dyn_pos, label='INeRF W/ Dynamics Neg')
 
-ax[3].fill_between(list(range(len(omega_fil_pos))), omega_fil_pos, omega_fil_neg, color='red',
+ax[1, 0].fill_between(list(range(len(omega_fil_pos))), omega_fil_pos, omega_fil_neg, color='red',
                  alpha=0.4)
-ax[3].fill_between(list(range(len(omega_dyn_pos))), omega_dyn_pos, omega_dyn_neg, color='green',
+ax[1, 0].fill_between(list(range(len(omega_dyn_pos))), omega_dyn_pos, omega_dyn_neg, color='green',
                  alpha=0.3)
 
-ax[2].set_ylabel('Velocity Error', fontsize=20)
-ax[3].set_ylabel(r'$\omega$ Error', fontsize=20)
+ax[1, 1].set_ylabel('Velocity Error', fontsize=70)
+ax[1, 0].set_ylabel(r'$\omega$ Error', fontsize=70)
 
-ax[0].set_ylabel('Rotational Error', fontsize=20)
-ax[1].set_ylabel('Translational Error', fontsize=20)
+ax[0, 0].set_ylabel('Rotational Error', fontsize=70)
+ax[0, 1].set_ylabel('Translational Error', fontsize=70)
 
-ax[0].set_xticks(np.arange(0, len(ang_error_filter), 300))
-for ind, label in enumerate(ax[0].get_xticklabels()):
+ax[0, 0].set_xticks(np.arange(0, len(ang_error_filter), 300))
+for ind, label in enumerate(ax[0, 0].get_xticklabels()):
     if ind % 1 != 0:
         label.set_visible(False)
 
-ax[1].set_xticks(np.arange(0, len(ang_error_filter), 300))
-for ind, label in enumerate(ax[1].get_xticklabels()):
+ax[0, 1].set_xticks(np.arange(0, len(ang_error_filter), 300))
+for ind, label in enumerate(ax[0, 1].get_xticklabels()):
     if ind % 1 != 0:
         label.set_visible(False)
 
-ax[2].set_xticks(np.arange(0, len(ang_error_filter), 300))
-for ind, label in enumerate(ax[2].get_xticklabels()):
+ax[1, 0].set_xticks(np.arange(0, len(ang_error_filter), 300))
+for ind, label in enumerate(ax[1, 0].get_xticklabels()):
     if ind % 1 != 0:
         label.set_visible(False)
 
-ax[3].set_xticks(np.arange(0, len(ang_error_filter), 300))
-for ind, label in enumerate(ax[3].get_xticklabels()):
+ax[1, 1].set_xticks(np.arange(0, len(ang_error_filter), 300))
+for ind, label in enumerate(ax[1, 1].get_xticklabels()):
     if ind % 1 != 0:
         label.set_visible(False)
 
 ticks = ticker.FuncFormatter(lambda x, pos: '{0:g}'.format(x/300))
-ax[0].xaxis.set_major_formatter(ticks)
-ax[1].xaxis.set_major_formatter(ticks)
-ax[2].xaxis.set_major_formatter(ticks)
-ax[3].xaxis.set_major_formatter(ticks)
+ax[0, 0].xaxis.set_major_formatter(ticks)
+ax[0, 1].xaxis.set_major_formatter(ticks)
+ax[1, 0].xaxis.set_major_formatter(ticks)
+ax[1, 1].xaxis.set_major_formatter(ticks)
 
-ax[0].legend(loc='upper center', bbox_to_anchor=(0.5, 1.05),
-        ncol=3, fancybox=True, shadow=True, fontsize=20)
+ax[0, 0].tick_params(axis='both', which='major', labelsize=50)
+ax[0, 1].tick_params(axis='both', which='major', labelsize=50)
+ax[1, 0].tick_params(axis='both', which='major', labelsize=50)
+ax[1, 1].tick_params(axis='both', which='major', labelsize=50)
+
+#bbox_to_anchor=(0.5, 1.05)
+leg = fig.legend(loc='upper center',
+        ncol=5, fancybox=True, shadow=True, fontsize=80)
+# set the linewidth of each legend object
+for legobj in leg.legendHandles:
+    legobj.set_linewidth(8.0)
 
 #ax[0].set_ylim([0, 0.05])
-ax[0].set_xlim([0, len(ang_error_filter)])
+#ax[0].set_xlim([0, len(ang_error_filter)])
 #ax[1].set_ylim([0, 0.1])
-ax[1].set_xlim([0, len(ang_error_filter)])
-ax[3].set_xlabel('Trajectory Time', fontsize=20)
+#ax[1].set_xlim([0, len(ang_error_filter)])
+ax[1, 0].set_xlabel('Time Step', fontsize=70)
+ax[1, 1].set_xlabel('Time Step', fontsize=70)
 
 fig.savefig(save_dir + f'errors_stat.pdf', format = 'pdf', dpi=300)
 
